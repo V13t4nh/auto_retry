@@ -30,6 +30,7 @@
   let sharedInterval       = null;
   let retryOn              = false;
   let chatOn               = false;
+  let autoAcceptOn         = false;   // tự động accept file changes
   let retryBusy            = false;   // mutex: true trong lúc retry đang type/send
   let lastRetryHandledAt   = 0;       // timestamp lần cuối retry xử lý thành công
   const chatObservers = new WeakSet();
@@ -109,6 +110,17 @@
       '.ag-log{max-height:64px;overflow-y:auto;font-size:10px;font-family:Consolas,monospace;color:#64748b}',
       '.ag-log::-webkit-scrollbar{width:3px}',
       '.ag-log::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}',
+      // Checkbox toggle
+      '.ag-chk-row{display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;user-select:none}',
+      '.ag-chk{appearance:none;-webkit-appearance:none;width:14px;height:14px;border-radius:3px;',
+        'border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.05);',
+        'cursor:pointer;flex-shrink:0;transition:all .2s;position:relative;}',
+      '.ag-chk:checked{background:linear-gradient(135deg,#059669,#10b981);border-color:#10b981;}',
+      '.ag-chk:checked::after{content:"";position:absolute;left:2px;top:-1px;',
+        'width:4px;height:8px;border:2px solid #fff;border-top:none;border-left:none;',
+        'transform:rotate(45deg);}',
+      '.ag-chk-lbl{font-size:10px;color:#94a3b8;}',
+      '.ag-chk-row:hover .ag-chk-lbl{color:#e2e8f0;}',
       // Popup
       '.ag-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000000;',
         'display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}',
@@ -318,11 +330,26 @@
     } catch (e) { return false; }
   }
 
+  // ── Auto-Accept: click "Accept all" button when visible ──────────────────
+  function tryAutoAccept() {
+    if (!autoAcceptOn) return;
+    // Tìm nút "Accept all" trong diff toolbar (text hoặc aria-label)
+    for (const el of document.querySelectorAll('span,button,[role="button"]')) {
+      const text = (el.textContent || '').trim();
+      const lbl  = (el.getAttribute('aria-label') || '').toLowerCase();
+      if ((text === 'Accept all' || lbl.includes('accept all')) && isVisible(el)) {
+        el.click();
+        console.log('%c[AG] ✅ Auto-Accept: clicked "Accept all"', 'color:#4ade80');
+        return;
+      }
+    }
+  }
+
   // ── Interval manager ──────────────────────────────────────────────────────
   function syncInterval() {
-    if ((retryOn || chatOn) && !sharedInterval) {
+    if ((retryOn || chatOn || autoAcceptOn) && !sharedInterval) {
       sharedInterval = setInterval(unifiedCheck, POLL_MS);
-    } else if (!retryOn && !chatOn && sharedInterval) {
+    } else if (!retryOn && !chatOn && !autoAcceptOn && sharedInterval) {
       clearInterval(sharedInterval); sharedInterval = null;
       retryBusy = false;
     }
@@ -332,6 +359,9 @@
   // UNIFIED CHECK — Retry ưu tiên, Chat sau
   // ═══════════════════════════════════════════════════════════════════════════
   async function unifiedCheck() {
+    // ── 0. AUTO-ACCEPT ───────────────────────────────────────────────────────
+    tryAutoAccept();
+
     // ── 1. AUTO-RETRY ────────────────────────────────────────────────────────
     if (retryOn && !retryBusy) {
       const banner = findErrorBanner();
@@ -486,6 +516,15 @@
       btnClick.addEventListener('click', () => applyMode('click'));
       btnType.addEventListener('click',  () => applyMode('type'));
 
+      // ── Auto-Accept checkbox ──
+      const rChkRow = el('div'); rChkRow.className = 'ag-chk-row';
+      const rChk = el('input', {}, {type:'checkbox'}); rChk.className = 'ag-chk';
+      rChk.checked = autoAcceptOn;
+      const rChkLbl = el('span'); rChkLbl.className = 'ag-chk-lbl'; setText(rChkLbl, 'Tự động accept file');
+      rChkRow.appendChild(rChk); rChkRow.appendChild(rChkLbl);
+      rChkRow.addEventListener('click', (e) => { if (e.target !== rChk) rChk.checked = !rChk.checked; autoAcceptOn = rChk.checked; syncInterval(); if (C.panel && C.panel._chkEl) C.panel._chkEl.checked = autoAcceptOn; });
+      rChk.addEventListener('change', () => { autoAcceptOn = rChk.checked; syncInterval(); if (C.panel && C.panel._chkEl) C.panel._chkEl.checked = autoAcceptOn; });
+
       // Start/Stop button
       const btn = el('button'); btn.className = 'ag-btn ag-btn-purple'; setText(btn, '▶ Bắt đầu');
       btn.addEventListener('click', () => this.toggle());
@@ -498,13 +537,14 @@
       body.appendChild(modeLbl);
       body.appendChild(modeRow);
       body.appendChild(msgWrap);
+      body.appendChild(rChkRow);
       body.appendChild(btn);
       body.appendChild(div);
       root.appendChild(hdr); root.appendChild(body);
       document.body.appendChild(root);
       makeDraggable(root, hdr);
 
-      this.panel = { root, _dot:dot, _cntEl:cntEl, _stateEl:stateEl, _btn:btn, _logEl:logEl };
+      this.panel = { root, _dot:dot, _cntEl:cntEl, _stateEl:stateEl, _btn:btn, _logEl:logEl, _chkEl:rChk };
       xBtn.addEventListener('click', () => { this.stop(); root.remove(); this.panel = null; });
     }
   };
@@ -812,6 +852,15 @@
 
       stats.appendChild(s1); stats.appendChild(s2); stats.appendChild(s3);
 
+      // ── Auto-Accept checkbox ──
+      const cChkRow = el('div'); cChkRow.className = 'ag-chk-row';
+      const cChk = el('input', {}, {type:'checkbox'}); cChk.className = 'ag-chk';
+      cChk.checked = autoAcceptOn;
+      const cChkLbl = el('span'); cChkLbl.className = 'ag-chk-lbl'; setText(cChkLbl, 'Tự động accept file');
+      cChkRow.appendChild(cChk); cChkRow.appendChild(cChkLbl);
+      cChkRow.addEventListener('click', (e) => { if (e.target !== cChk) cChk.checked = !cChk.checked; autoAcceptOn = cChk.checked; syncInterval(); if (R.panel && R.panel._chkEl) R.panel._chkEl.checked = autoAcceptOn; });
+      cChk.addEventListener('change', () => { autoAcceptOn = cChk.checked; syncInterval(); if (R.panel && R.panel._chkEl) R.panel._chkEl.checked = autoAcceptOn; });
+
       const btn = el('button'); btn.className = 'ag-btn ag-btn-green'; setText(btn, '⚙ Config & Start');
       btn.addEventListener('click', () => this.toggle());
 
@@ -820,12 +869,12 @@
       div.appendChild(logEl);
 
       body.appendChild(phaseEl); body.appendChild(stats);
-      body.appendChild(btn); body.appendChild(div);
+      body.appendChild(cChkRow); body.appendChild(btn); body.appendChild(div);
       root.appendChild(hdr); root.appendChild(body);
       document.body.appendChild(root);
       makeDraggable(root, hdr);
 
-      this.panel = { root, _dot:dot, _phaseEl:phaseEl, _okEl:okEl, _cycleEl:cycleEl, _retryEl:retryEl, _btn:btn, _logEl:logEl };
+      this.panel = { root, _dot:dot, _phaseEl:phaseEl, _okEl:okEl, _cycleEl:cycleEl, _retryEl:retryEl, _btn:btn, _logEl:logEl, _chkEl:cChk };
       xBtn.addEventListener('click', () => { this.stop(); root.remove(); this.panel = null; });
     }
   };
